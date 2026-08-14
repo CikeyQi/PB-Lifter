@@ -1,0 +1,111 @@
+name: Build and release
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    env:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+      VRC_SDK_VERSION: 3.10.4
+      NDMF_VERSION: 1.8.0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read package version
+        id: package
+        run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Install package dependencies
+        run: |
+          project=".github/unity-build-project/Packages"
+          mkdir -p "$project/nadena.dev.ndmf" "$project/com.vrchat.base" "$project/com.vrchat.avatars"
+          curl --fail --location --retry 3 "https://github.com/bdunderscore/ndmf/releases/download/${NDMF_VERSION}/nadena.dev.ndmf-${NDMF_VERSION}.zip" --output /tmp/ndmf.zip
+          unzip -q /tmp/ndmf.zip -d "$project/nadena.dev.ndmf"
+          curl --fail --location --retry 3 "https://github.com/vrchat/packages/releases/download/${VRC_SDK_VERSION}/com.vrchat.base-${VRC_SDK_VERSION}.zip" --output /tmp/vrchat-base.zip
+          unzip -q /tmp/vrchat-base.zip -d "$project/com.vrchat.base"
+          curl --fail --location --retry 3 "https://github.com/vrchat/packages/releases/download/${VRC_SDK_VERSION}/com.vrchat.avatars-${VRC_SDK_VERSION}.zip" --output /tmp/vrchat-avatars.zip
+          unzip -q /tmp/vrchat-avatars.zip -d "$project/com.vrchat.avatars"
+          rm -rf "$project/com.vrchat.base/Samples" "$project/com.vrchat.avatars/Samples"
+
+      - name: Stage Unity package source
+        run: |
+          destination=".github/unity-build-project/Assets/PB Lifter"
+          mkdir -p "$destination"
+          cp -R Editor Runtime "$destination/"
+          cp README.md README_zh.md LICENSE.md "$destination/"
+
+      - name: Compile and export Unity package
+        uses: game-ci/unity-builder@v4
+        with:
+          projectPath: .github/unity-build-project
+          unityVersion: 2022.3.62f1
+          targetPlatform: StandaloneLinux64
+          buildMethod: PBLifterReleaseExporter.ExportUnityPackage
+          versioning: None
+          allowDirtyBuild: true
+
+      - name: Collect Unity package asset
+        run: |
+          mkdir -p release
+          cp ".github/unity-build-project/Builds/PB-Lifter-${{ steps.package.outputs.version }}.unitypackage" release/
+
+      - name: Create VPM package and repository listing
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          package_asset="release/PB-Lifter-${VERSION}.zip"
+          package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/PB-Lifter-${VERSION}.zip"
+          repository_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/vpm.json"
+          zip -qr "$package_asset" Editor Runtime package.json README.md README_zh.md LICENSE.md
+          package_hash="$(sha256sum "$package_asset" | awk '{print $1}')"
+          jq --arg package_url "$package_url" --arg package_hash "$package_hash" --arg repository_url "$repository_url" '
+            {
+              name: "PB Lifter",
+              id: .name,
+              url: $repository_url,
+              author: .author,
+              packages: {
+                (.name): {
+                  versions: {
+                    (.version): (del(.repository) + {
+                      url: $package_url,
+                      zipSHA256: $package_hash,
+                      repo: $repository_url
+                    })
+                  }
+                }
+              }
+            }
+          ' package.json > release/vpm.json
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          tag="v${VERSION}"
+          commit_message="$(git log -1 --format=%B)"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            body="$(gh release view "$tag" --json body --jq .body)"
+            if [[ "$body" != *"## Commit ${GITHUB_SHA}"* ]]; then
+              body="${body}"$'\n\n'"## Commit ${GITHUB_SHA}"$'\n'"${commit_message}"
+              gh release edit "$tag" --title "PB Lifter ${VERSION}" --notes "$body"
+            fi
+          else
+            gh release create "$tag" --title "PB Lifter ${VERSION}" --notes "$commit_message"
+          fi
+          gh release upload "$tag" release/PB-Lifter-*.unitypackage release/PB-Lifter-*.zip release/vpm.json --clobber

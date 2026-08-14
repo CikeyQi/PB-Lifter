@@ -1,0 +1,13 @@
+{
+  "name": "io.github.cikeyqi.pb-lifter.runtime",
+  "rootNamespace": "PBLifter",
+  "references": [
+    "nadena.dev.ndmf.runtime"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "overrideReferences": false,
+  "noEngineReferences": false
+}

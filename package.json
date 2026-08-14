@@ -1,0 +1,23 @@
+{
+  "name": "io.github.cikeyqi.pb-lifter",
+  "version": "0.1.0",
+  "displayName": "PB Lifter",
+  "description": "Tolerance-based clustering and merging for VRChat PhysBones.",
+  "unity": "2022.3",
+  "license": "MIT",
+  "author": {
+    "name": "CikeyQi",
+    "url": "https://github.com/CikeyQi"
+  },
+  "url": "https://github.com/CikeyQi/PB-Lifter",
+  "documentationUrl": "https://github.com/CikeyQi/PB-Lifter#readme",
+  "licensesUrl": "https://github.com/CikeyQi/PB-Lifter/blob/main/LICENSE.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CikeyQi/PB-Lifter.git"
+  },
+  "vpmDependencies": {
+    "nadena.dev.ndmf": ">=1.8.0 <2.0.0",
+    "com.vrchat.avatars": ">=3.7.0 <3.11.0"
+  }
+}

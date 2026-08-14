@@ -1,0 +1,27 @@
+{
+  "name": "io.github.cikeyqi.pb-lifter.editor",
+  "rootNamespace": "PBLifter.Editor",
+  "references": [
+    "io.github.cikeyqi.pb-lifter.runtime",
+    "nadena.dev.ndmf",
+    "VRCSDK3A"
+  ],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "autoReferenced": true,
+  "overrideReferences": false,
+  "versionDefines": [
+    {
+      "name": "com.vrchat.avatars",
+      "expression": "",
+      "define": "PBLIFTER_VRCSDK3"
+    },
+    {
+      "name": "com.vrchat.avatars",
+      "expression": "3.8.0",
+      "define": "PBLIFTER_VRCSDK3_IGNORE_OTHER_PHYSBONE"
+    }
+  ],
+  "noEngineReferences": false
+}
