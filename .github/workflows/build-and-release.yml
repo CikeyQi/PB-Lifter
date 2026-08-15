@@ -2,18 +2,19 @@ name: Build and release
 
 on:
   push:
+    branches-ignore:
+      - gh-pages
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 concurrency:
-  group: release-${{ github.ref_name }}
+  group: release
   cancel-in-progress: false
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
       UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
       UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -29,7 +30,18 @@ jobs:
         id: package
         run: echo "version=$(jq -r .version package.json)" >> "$GITHUB_OUTPUT"
 
+      - name: Restore Unity package dependencies
+        id: unity-packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            .github/unity-build-project/Packages/nadena.dev.ndmf
+            .github/unity-build-project/Packages/com.vrchat.base
+            .github/unity-build-project/Packages/com.vrchat.avatars
+          key: unity-packages-2022.3.62f1-ndmf-${{ env.NDMF_VERSION }}-vrcsdk-${{ env.VRC_SDK_VERSION }}
+
       - name: Install package dependencies
+        if: steps.unity-packages.outputs.cache-hit != 'true'
         run: |
           project=".github/unity-build-project/Packages"
           mkdir -p "$project/nadena.dev.ndmf" "$project/com.vrchat.base" "$project/com.vrchat.avatars"
@@ -58,26 +70,23 @@ jobs:
           versioning: None
           allowDirtyBuild: true
 
-      - name: Collect Unity package asset
-        run: |
-          mkdir -p release
-          cp ".github/unity-build-project/Builds/PB-Lifter-${{ steps.package.outputs.version }}.unitypackage" release/
-
       - name: Create VPM package and repository listing
         env:
           VERSION: ${{ steps.package.outputs.version }}
+          REPOSITORY_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/vpm.json
         run: |
+          mkdir -p release
+          cp ".github/unity-build-project/Builds/PB-Lifter-${VERSION}.unitypackage" release/
           package_asset="release/PB-Lifter-${VERSION}.zip"
           package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/PB-Lifter-${VERSION}.zip"
-          repository_url="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/vpm.json"
           zip -qr "$package_asset" Editor Runtime package.json README.md README_zh.md LICENSE.md
           package_hash="$(sha256sum "$package_asset" | awk '{print $1}')"
-          jq --arg package_url "$package_url" --arg package_hash "$package_hash" --arg repository_url "$repository_url" '
+          jq --arg package_url "$package_url" --arg package_hash "$package_hash" --arg repository_url "$REPOSITORY_URL" '
             {
-              name: "PB Lifter",
-              id: .name,
+              name: "PB Lifter VPM Repository",
+              id: "io.github.cikeyqi.pb-lifter.vpm",
               url: $repository_url,
-              author: .author,
+              author: .author.name,
               packages: {
                 (.name): {
                   versions: {
@@ -92,20 +101,61 @@ jobs:
             }
           ' package.json > release/vpm.json
 
+      - name: Create release notes
+        env:
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          tag="v${VERSION}"
+          unitypackage_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/PB-Lifter-${VERSION}.unitypackage"
+          commit_format='%s [`%h`]('"${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"'/commit/%H)'
+          if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+            {
+              git show --no-patch --format="$commit_format" "$tag"
+              git log --reverse --format="$commit_format" "${tag}..HEAD"
+            } > release/commits.md
+          else
+            git log -1 --format="$commit_format" > release/commits.md
+          fi
+          {
+            printf 'Version %s\n---\n' "$VERSION"
+            printf '\nInstaller unitypackage for this version is [here](%s).\n' "$unitypackage_url"
+            printf '\n## Changelog\n\n'
+            cat release/commits.md
+          } > release/release-notes.md
+
       - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.package.outputs.version }}
         run: |
           tag="v${VERSION}"
-          commit_message="$(git log -1 --format=%B)"
           if gh release view "$tag" >/dev/null 2>&1; then
-            body="$(gh release view "$tag" --json body --jq .body)"
-            if [[ "$body" != *"## Commit ${GITHUB_SHA}"* ]]; then
-              body="${body}"$'\n\n'"## Commit ${GITHUB_SHA}"$'\n'"${commit_message}"
-              gh release edit "$tag" --title "PB Lifter ${VERSION}" --notes "$body"
-            fi
+            gh release edit "$tag" --title "PB Lifter ${VERSION}" --notes-file release/release-notes.md
           else
-            gh release create "$tag" --title "PB Lifter ${VERSION}" --notes "$commit_message"
+            gh release create "$tag" --title "PB Lifter ${VERSION}" --notes-file release/release-notes.md
           fi
-          gh release upload "$tag" release/PB-Lifter-*.unitypackage release/PB-Lifter-*.zip release/vpm.json --clobber
+          gh release upload "$tag" release/PB-Lifter-*.unitypackage release/PB-Lifter-*.zip --clobber
+
+      - name: Update VPM repository
+        run: |
+          git fetch origin gh-pages
+          pages_dir="$(mktemp -d)"
+          git worktree add --detach "$pages_dir" origin/gh-pages
+          jq -s '
+            .[0] as $existing | .[1] as $entry |
+            $entry | .packages as $new_packages |
+            .packages = (
+              ($existing.packages // {}) |
+              reduce ($new_packages | to_entries[]) as $package (
+                .;
+                .[$package.key].versions = ((.[$package.key].versions // {}) + $package.value.versions)
+              )
+            )
+          ' "$pages_dir/vpm.json" release/vpm.json > "$pages_dir/vpm.json.tmp"
+          mv "$pages_dir/vpm.json.tmp" "$pages_dir/vpm.json"
+          git -C "$pages_dir" config user.name github-actions[bot]
+          git -C "$pages_dir" config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git -C "$pages_dir" add vpm.json
+          if git -C "$pages_dir" diff --cached --quiet; then exit 0; fi
+          git -C "$pages_dir" commit -m "Update VPM repository"
+          git -C "$pages_dir" push origin HEAD:gh-pages

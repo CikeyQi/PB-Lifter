@@ -2,7 +2,7 @@
   "name": "io.github.cikeyqi.pb-lifter",
   "version": "0.1.0",
   "displayName": "PB Lifter",
-  "description": "Tolerance-based clustering and merging for VRChat PhysBones.",
+  "description": "VRChat Avatar PhysBone Optimizer Plugin | VRChat 模型动骨优化插件",
   "unity": "2022.3",
   "license": "MIT",
   "author": {

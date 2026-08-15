@@ -44,12 +44,14 @@ PB Lifter 是面向 VRChat Avatar 的 [NDMF](https://github.com/bdunderscore/ndm
 2. 添加以下仓库地址：
 
    ```text
-   https://github.com/CikeyQi/PB-Lifter/releases/latest/download/vpm.json
+   https://cikeyqi.github.io/PB-Lifter/vpm.json
    ```
 
 3. 将 **PB Lifter** 添加到 Avatar 工程。
 
-每个 GitHub Release 都会发布 VPM 安装包及其仓库列表。
+[一键添加到 VCC](https://cikeyqi.github.io/PB-Lifter/add-repo/)
+
+每个 GitHub Release 都会发布 VPM 安装包；每次发布构建后，GitHub Pages 上的仓库列表会随之更新。
 
 ### Unity package
 

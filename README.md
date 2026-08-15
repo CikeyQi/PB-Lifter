@@ -44,12 +44,14 @@ Install the VRChat Avatars SDK and NDMF in the avatar project before adding PB L
 2. Add the repository URL below:
 
    ```text
-   https://github.com/CikeyQi/PB-Lifter/releases/latest/download/vpm.json
+   https://cikeyqi.github.io/PB-Lifter/vpm.json
    ```
 
 3. Add **PB Lifter** to the avatar project.
 
-Each GitHub Release publishes both the VPM package and the repository listing.
+[Add PB Lifter to VCC](https://cikeyqi.github.io/PB-Lifter/add-repo/)
+
+Each GitHub Release publishes the VPM package. The repository listing on GitHub Pages is updated after each release build.
 
 ### Unity package
 
