@@ -24,7 +24,7 @@
             "nadena.dev.ndmf": ">=1.8.0 <2.0.0",
             "com.vrchat.avatars": ">=3.7.0 <3.11.0"
           },
-          "zipSHA256": "3d7b47005bdbe6f723d71c325c34cf7c1f33529cddb266faab54f4e5e40e23bf",
+          "zipSHA256": "120b29e43ecdbea8f2fb1df8f0ee95b04bf67368c6db7688a8b605e4a7826013",
           "repo": "https://CikeyQi.github.io/PB-Lifter/vpm.json"
         }
       }
