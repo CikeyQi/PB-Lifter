@@ -26,6 +26,27 @@
           },
           "zipSHA256": "120b29e43ecdbea8f2fb1df8f0ee95b04bf67368c6db7688a8b605e4a7826013",
           "repo": "https://CikeyQi.github.io/PB-Lifter/vpm.json"
+        },
+        "0.1.1": {
+          "name": "io.github.cikeyqi.pb-lifter",
+          "version": "0.1.1",
+          "displayName": "PB Lifter",
+          "description": "VRChat Avatar PhysBone Optimizer Plugin | VRChat 模型动骨优化插件",
+          "unity": "2022.3",
+          "license": "MIT",
+          "author": {
+            "name": "CikeyQi",
+            "url": "https://github.com/CikeyQi"
+          },
+          "url": "https://github.com/CikeyQi/PB-Lifter/releases/download/v0.1.1/PB-Lifter-0.1.1.zip",
+          "documentationUrl": "https://github.com/CikeyQi/PB-Lifter#readme",
+          "licensesUrl": "https://github.com/CikeyQi/PB-Lifter/blob/main/LICENSE",
+          "vpmDependencies": {
+            "nadena.dev.ndmf": ">=1.8.0 <2.0.0",
+            "com.vrchat.avatars": ">=3.7.0 <3.11.0"
+          },
+          "zipSHA256": "63893f2342ab6aa0ac19ce90e2984fd9f1594d4ce737cd05ef62f5e2d5187ece",
+          "repo": "https://CikeyQi.github.io/PB-Lifter/vpm.json"
         }
       }
     }
