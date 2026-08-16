@@ -58,7 +58,7 @@ jobs:
           destination=".github/unity-build-project/Assets/PB Lifter"
           mkdir -p "$destination"
           cp -R Editor Runtime "$destination/"
-          cp README.md README_zh.md LICENSE.md "$destination/"
+          cp README.md README_zh.md LICENSE NOTICE "$destination/"
 
       - name: Compile and export Unity package
         uses: game-ci/unity-builder@v4
@@ -79,7 +79,7 @@ jobs:
           cp ".github/unity-build-project/Builds/PB-Lifter-${VERSION}.unitypackage" release/
           package_asset="release/PB-Lifter-${VERSION}.zip"
           package_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/PB-Lifter-${VERSION}.zip"
-          zip -qr "$package_asset" Editor Runtime package.json README.md README_zh.md LICENSE.md
+          zip -qr "$package_asset" Editor Runtime package.json README.md README_zh.md LICENSE NOTICE
           package_hash="$(sha256sum "$package_asset" | awk '{print $1}')"
           jq --arg package_url "$package_url" --arg package_hash "$package_hash" --arg repository_url "$REPOSITORY_URL" '
             {

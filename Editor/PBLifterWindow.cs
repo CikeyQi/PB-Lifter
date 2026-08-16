@@ -74,10 +74,15 @@ namespace PBLifter.Editor
             header.style.flexShrink = 0;
             header.style.marginBottom = 6;
             var titleRow = Row();
-            var title = new Label($"PB Lifter v{PBLifterVersion.Current}");
+            var title = new Label("PB Lifter");
             title.style.fontSize = 16;
             title.style.unityFontStyleAndWeight = FontStyle.Bold;
             titleRow.Add(title);
+            var version = new Label($"v{PBLifterVersion.Current}");
+            version.style.fontSize = 11;
+            version.style.marginLeft = 4;
+            version.style.color = new Color(0.7f, 0.7f, 0.7f);
+            titleRow.Add(version);
             titleRow.Add(CreateBadge("NDMF", new Color(0.2f, 0.2f, 0.2f, 0.6f), new Color(0.8f, 0.8f, 0.8f)));
             header.Add(titleRow);
 
@@ -224,14 +229,23 @@ namespace PBLifter.Editor
             var scroll = NewScrollView();
             scroll.Add(SectionTitle(L("合并策略", "Merge Strategy")));
 
-            scroll.Add(Segmented(L("数值聚合方式", "Numeric Aggregation"), new[] { L("算术平均", "Arithmetic Mean"), L("加权平均", "Weighted Mean"), L("中位数", "Median") }, (int)_options.aggregation, index =>
+            scroll.Add(PopupRow(L("数值聚合方式", "Numeric Aggregation"), new List<string>
+            {
+                L("算术平均", "Arithmetic Mean"),
+                L("加权平均", "Weighted Mean"),
+                L("中位数", "Median"),
+            }, (int)_options.aggregation, index =>
             {
                 _options.aggregation = (NumericAggregation)index;
                 InvalidatePreview();
                 RefreshView();
             }));
 
-            var weighting = Segmented(L("权重依据", "Weighting Basis"), new[] { L("等权重", "Equal Weight"), L("受影响骨骼数", "Affected Bone Count") }, (int)_options.weighting, index =>
+            var weighting = PopupRow(L("权重依据", "Weighting Basis"), new List<string>
+            {
+                L("等权重", "Equal Weight"),
+                L("受影响骨骼数", "Affected Bone Count"),
+            }, (int)_options.weighting, index =>
             {
                 _options.weighting = (Weighting)index;
                 InvalidatePreview();
@@ -239,24 +253,36 @@ namespace PBLifter.Editor
             weighting.SetEnabled(_options.aggregation == NumericAggregation.WeightedMean);
             scroll.Add(weighting);
 
-            scroll.Add(Segmented(L("聚类算法", "Clustering Algorithm"), new[] { L("聚合值约束", "Centroid Bounded"), L("完全链接", "Complete Linkage") }, (int)_options.clustering, index =>
+            scroll.Add(PopupRow(L("聚类算法", "Clustering Algorithm"), new List<string>
+            {
+                L("聚合值约束", "Centroid Bounded"),
+                L("完全链接", "Complete Linkage"),
+            }, (int)_options.clustering, index =>
             {
                 _options.clustering = (ClusteringMode)index;
                 InvalidatePreview();
                 RefreshView();
             }));
 
+            scroll.Add(AffectedBoneLimitField(L("单个候选项受影响骨骼上限", "Affected-Bone Limit per Candidate"), _options.maxAffectedTransformsPerCandidate,
+                1, value => _options.maxAffectedTransformsPerCandidate = value));
+            scroll.Add(AffectedBoneLimitField(L("每组合并受影响骨骼上限", "Affected-Bone Limit per Merge Group"), _options.maxAffectedTransformsPerGroup,
+                2, value => _options.maxAffectedTransformsPerGroup = value));
+
+            scroll.Add(Divider());
+            scroll.Add(SectionTitle(L("风险选项", "Risk Options")));
             var highRisk = new Foldout { text = L("高风险放宽", "High-Risk Relaxations"), value = _highRiskExpanded };
             highRisk.RegisterValueChangedCallback(evt => _highRiskExpanded = evt.newValue);
             highRisk.Add(new HelpBox(L("这些选项会跳过对应的安全筛选，可能改变交互、动画或模拟结果。仅在已验证目标 Avatar 后启用。", "These options skip their corresponding safety checks and may alter interaction, animation, or simulation. Enable them only after validating the target Avatar."),
                 HelpBoxMessageType.Warning));
-            AddHighRiskRelaxation(highRisk, L("忽略实际允许抓取（自己或他人）", "Ignore active grabbing permissions (self or others)"), HighRiskRelaxations.IgnoreGrabbing);
-            AddHighRiskRelaxation(highRisk, L("忽略参数驱动", "Ignore parameter-driven PhysBones"), HighRiskRelaxations.IgnoreParameter);
-            AddHighRiskRelaxation(highRisk, L("忽略非 Ignore 多子节点模式", "Ignore non-Ignore multi-child mode"), HighRiskRelaxations.IgnoreMultiChildMode);
-            AddHighRiskRelaxation(highRisk, L("忽略 Humanoid 骨骼映射", "Ignore Humanoid bone mapping"), HighRiskRelaxations.IgnoreHumanoidBoneMapping);
-            AddHighRiskRelaxation(highRisk, L("忽略组件自身激活动画", "Ignore component activation animation"), HighRiskRelaxations.IgnoreSelfActivationAnimation);
-            AddHighRiskRelaxation(highRisk, L("忽略受影响骨骼上的约束", "Ignore constraints on affected bones"), HighRiskRelaxations.IgnoreAffectedBoneConstraints);
-            AddHighRiskRelaxation(highRisk, L("忽略候选项的 100 受影响骨骼限制", "Ignore the 100-affected-bone candidate limit"), HighRiskRelaxations.IgnoreAffectedBoneCountLimit);
+            AddRelaxationToggle(highRisk, L("允许合并已禁用的组件", "Allow merging disabled components"), HighRiskRelaxations.IgnoreDisabledComponent);
+            AddRelaxationToggle(highRisk, L("允许合并层级中未激活的组件", "Allow merging hierarchy-inactive components"), HighRiskRelaxations.IgnoreHierarchyInactive);
+            AddRelaxationToggle(highRisk, L("允许合并实际允许抓取（自己或他人）的组件", "Allow merging components with active grabbing permissions (self or others)"), HighRiskRelaxations.IgnoreGrabbing);
+            AddRelaxationToggle(highRisk, L("允许合并带参数的组件", "Allow merging components with a parameter"), HighRiskRelaxations.IgnoreParameter);
+            AddRelaxationToggle(highRisk, L("允许合并非 Ignore 多子节点模式", "Allow merging non-Ignore multi-child modes"), HighRiskRelaxations.IgnoreMultiChildMode);
+            AddRelaxationToggle(highRisk, L("允许合并 Humanoid 骨骼映射路径", "Allow merging Humanoid bone-mapping paths"), HighRiskRelaxations.IgnoreHumanoidBoneMapping);
+            AddRelaxationToggle(highRisk, L("允许合并组件自身激活动画", "Allow merging self-activation animation"), HighRiskRelaxations.IgnoreSelfActivationAnimation);
+            AddRelaxationToggle(highRisk, L("允许合并受影响骨骼上带约束的组件", "Allow merging components with constraints on affected bones"), HighRiskRelaxations.IgnoreAffectedBoneConstraints);
             scroll.Add(highRisk);
 
             BuildExclusions(scroll);
@@ -264,7 +290,7 @@ namespace PBLifter.Editor
             target.Add(scroll);
         }
 
-        private void AddHighRiskRelaxation(VisualElement target, string label, HighRiskRelaxations relaxation)
+        private void AddRelaxationToggle(VisualElement target, string label, HighRiskRelaxations relaxation)
         {
             var row = Row();
             var toggle = new Toggle { value = (_options.highRiskRelaxations & relaxation) != 0 };
@@ -285,8 +311,56 @@ namespace PBLifter.Editor
             target.Add(row);
         }
 
+        private static Toggle AddRightAlignedToggle(VisualElement target, string label, bool value)
+        {
+            var row = Row();
+            row.style.marginTop = 2;
+            row.style.marginBottom = 2;
+            var caption = new Label(label);
+            caption.style.flexGrow = 1;
+            caption.style.minWidth = 0;
+            row.Add(caption);
+            var toggle = new Toggle { value = value };
+            toggle.style.flexShrink = 0;
+            row.Add(toggle);
+            target.Add(row);
+            return toggle;
+        }
+
+        private VisualElement AffectedBoneLimitField(string label, int value, int minimum, Action<int> onChanged)
+        {
+            var field = Row();
+            field.style.width = Length.Percent(100);
+            field.style.flexGrow = 1;
+            field.style.flexShrink = 1;
+            field.style.minWidth = 0;
+            field.style.marginTop = 2;
+            field.style.marginBottom = 2;
+
+            var caption = new Label(label);
+            caption.style.flexGrow = 1;
+            caption.style.minWidth = 0;
+            field.Add(caption);
+
+            var input = new IntegerField { value = value, isDelayed = true };
+            input.style.width = 80;
+            input.style.minWidth = 80;
+            input.style.flexShrink = 0;
+            input.style.marginLeft = 6;
+            input.RegisterValueChangedCallback(evt =>
+            {
+                onChanged(Mathf.Max(minimum, evt.newValue));
+                InvalidatePreview();
+                RefreshView();
+            });
+            field.Add(input);
+
+            return field;
+        }
+
         private void BuildExclusions(VisualElement target)
         {
+            target.Add(Divider());
             target.Add(SectionTitle(L("排除 PhysBone", "Exclude PhysBones")));
 
             var addRow = Row();
@@ -386,13 +460,18 @@ namespace PBLifter.Editor
             toolbar.Add(new ToolbarButton(() => SetAllTolerances(false)) { text = L("全部严格匹配", "Make All Strict") });
             target.Add(toolbar);
 
-            var mode = Segmented(L("默认容差类型", "Default Tolerance Mode"), new[] { L("绝对值", "Absolute"), L("相对值", "Relative") }, (int)_options.toleranceInterpretation, index =>
+            var mode = PopupRow(L("默认容差类型", "Default Tolerance Mode"), new List<string>
+            {
+                L("绝对值", "Absolute"),
+                L("相对值", "Relative"),
+            }, (int)_options.toleranceInterpretation, index =>
             {
                 _options.toleranceInterpretation = (ToleranceInterpretation)index;
                 InvalidatePreview();
             });
             mode.style.marginTop = 4;
             target.Add(mode);
+            target.Add(Divider());
 
             var fields = _tolerances.Where(field => string.IsNullOrWhiteSpace(_fieldSearch) ||
                 field.propertyPath.IndexOf(_fieldSearch, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
@@ -485,18 +564,27 @@ namespace PBLifter.Editor
             separator.style.marginBottom = 8;
             target.Add(separator);
 
-            var enabled = new Toggle(L("允许该字段在容差内不同", "Allow this field to differ within tolerance")) { value = item.allowDifference };
+            var enabled = AddRightAlignedToggle(target, L("允许该字段在容差内不同", "Allow this field to differ within tolerance"), item.allowDifference);
             enabled.RegisterValueChangedCallback(evt =>
             {
                 item.allowDifference = evt.newValue;
                 InvalidatePreview();
                 RefreshView();
             });
-            target.Add(enabled);
 
             var isCurve = item.propertyPath.EndsWith("Curve", StringComparison.Ordinal);
-            var tolerance = new FloatField(isCurve ? L("关键帧容差", "Keyframe Tolerance") : L("容差", "Tolerance")) { value = item.tolerance, isDelayed = true };
-            tolerance.SetEnabled(item.allowDifference);
+            var toleranceRow = Row();
+            toleranceRow.style.marginTop = 2;
+            toleranceRow.style.marginBottom = 2;
+            var toleranceCaption = new Label(isCurve ? L("关键帧容差", "Keyframe Tolerance") : L("容差", "Tolerance"));
+            toleranceCaption.style.flexGrow = 1;
+            toleranceCaption.style.minWidth = 0;
+            toleranceRow.Add(toleranceCaption);
+            var tolerance = new FloatField { value = item.tolerance, isDelayed = true };
+            tolerance.style.width = 80;
+            tolerance.style.minWidth = 80;
+            tolerance.style.flexShrink = 0;
+            toleranceRow.SetEnabled(item.allowDifference);
             tolerance.RegisterValueChangedCallback(evt =>
             {
                 item.tolerance = Mathf.Max(0, evt.newValue);
@@ -504,11 +592,12 @@ namespace PBLifter.Editor
                 InvalidatePreview();
                 list.RefreshItems();
             });
-            target.Add(tolerance);
+            toleranceRow.Add(tolerance);
+            target.Add(toleranceRow);
 
-            var overrideMode = new Toggle(L("覆盖默认容差类型", "Override default tolerance mode")) { value = item.overrideToleranceInterpretation };
-            overrideMode.style.display = isCurve ? DisplayStyle.None : DisplayStyle.Flex;
-            overrideMode.SetEnabled(item.allowDifference);
+            var overrideMode = AddRightAlignedToggle(target, L("覆盖默认容差类型", "Override default tolerance mode"), item.overrideToleranceInterpretation);
+            overrideMode.parent.style.display = isCurve ? DisplayStyle.None : DisplayStyle.Flex;
+            overrideMode.parent.SetEnabled(item.allowDifference);
             overrideMode.RegisterValueChangedCallback(evt =>
             {
                 item.overrideToleranceInterpretation = evt.newValue;
@@ -516,14 +605,17 @@ namespace PBLifter.Editor
                 BuildToleranceDetail(target, item, list);
                 list.RefreshItems();
             });
-            target.Add(overrideMode);
 
-            var interpretation = Segmented(L("容差类型", "Tolerance Mode"), new[] { L("绝对值", "Absolute"), L("相对值", "Relative") }, (int)item.toleranceInterpretation, index =>
+            var interpretation = PopupRow(L("容差类型", "Tolerance Mode"), new List<string>
+            {
+                L("绝对值", "Absolute"),
+                L("相对值", "Relative"),
+            }, (int)item.toleranceInterpretation, index =>
             {
                 item.toleranceInterpretation = (ToleranceInterpretation)index;
                 InvalidatePreview();
                 list.RefreshItems();
-            });
+            }, 100);
             interpretation.style.display = isCurve ? DisplayStyle.None : DisplayStyle.Flex;
             interpretation.SetEnabled(item.allowDifference && item.overrideToleranceInterpretation);
             target.Add(interpretation);
@@ -626,9 +718,13 @@ namespace PBLifter.Editor
                 target.Add(row);
             }
             var changes = PBLifterPass.DifferingNumericFields(group, _previewPlan).ToArray();
-            target.Add(new HelpBox(changes.Length > 0
+            var changesBox = new HelpBox(changes.Length > 0
                 ? L("将聚合的数值差异字段：", "Differing numeric fields to be aggregated: ") + string.Join(PBLifterLocalization.UsesChinese ? "、" : ", ", changes)
-                : L("未检测到可聚合的数值差异字段。", "No aggregatable numeric field differences were detected."), HelpBoxMessageType.None));
+                : L("未检测到可聚合的数值差异字段。", "No aggregatable numeric field differences were detected."), HelpBoxMessageType.None);
+            changesBox.style.marginLeft = 0;
+            changesBox.style.marginRight = 0;
+            changesBox.style.marginTop = 10;
+            target.Add(changesBox);
         }
 
         private void BuildDiagnosticsView(VisualElement target)
@@ -839,6 +935,16 @@ namespace PBLifter.Editor
             return row;
         }
 
+        private static VisualElement Divider()
+        {
+            var divider = new VisualElement();
+            divider.style.height = 1;
+            divider.style.marginTop = 8;
+            divider.style.marginBottom = 4;
+            divider.style.backgroundColor = new Color(1, 1, 1, 0.12f);
+            return divider;
+        }
+
         private static Label SizedLabel(string text, float width, bool bold)
         {
             var label = new Label(text);
@@ -943,6 +1049,28 @@ namespace PBLifter.Editor
             return field;
         }
 
+        private static VisualElement PopupRow(string label, List<string> choices, int selectedIndex, Action<int> onChanged,
+            float labelWidth = 150)
+        {
+            var row = Row();
+            row.style.width = Length.Percent(100);
+            row.style.minWidth = 0;
+            row.style.marginTop = 2;
+            row.style.marginBottom = 4;
+            row.Add(SizedLabel(label, labelWidth, false));
+            var spacer = new VisualElement();
+            spacer.style.flexGrow = 1;
+            spacer.style.minWidth = 0;
+            row.Add(spacer);
+            var picker = new PopupField<string>(choices, selectedIndex);
+            picker.style.width = 180;
+            picker.style.minWidth = 180;
+            picker.style.flexShrink = 0;
+            picker.RegisterValueChangedCallback(evt => onChanged(choices.IndexOf(evt.newValue)));
+            row.Add(picker);
+            return row;
+        }
+
         private static Toggle OptionToggle(string label, bool value, Action<bool> onChanged)
         {
             var toggle = new Toggle(label) { value = value };
@@ -957,6 +1085,8 @@ namespace PBLifter.Editor
             clustering = source.clustering,
             toleranceInterpretation = source.toleranceInterpretation,
             highRiskRelaxations = source.highRiskRelaxations,
+            maxAffectedTransformsPerCandidate = source.maxAffectedTransformsPerCandidate,
+            maxAffectedTransformsPerGroup = source.maxAffectedTransformsPerGroup,
         };
 
         private static List<PBLifterFieldTolerance> CopyTolerances(IEnumerable<PBLifterFieldTolerance> source) => source

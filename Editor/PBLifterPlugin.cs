@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using nadena.dev.ndmf;
+using nadena.dev.ndmf.animator;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Animations;
@@ -24,7 +25,8 @@ namespace PBLifter.Editor
         protected override void Configure()
         {
             InPhase(BuildPhase.Optimizing)
-                .Run("PB Lifter: Cluster and merge PhysBones", PBLifterPass.Run);
+                .WithRequiredExtensions(new[] { typeof(AnimatorServicesContext) }, sequence =>
+                    sequence.Run("PB Lifter: Cluster and merge PhysBones", PBLifterPass.Run));
         }
     }
 
@@ -54,32 +56,65 @@ namespace PBLifter.Editor
         {
             private readonly HashSet<string> _activePaths = new HashSet<string>();
             private readonly HashSet<string> _positionOrRotationPaths = new HashSet<string>();
+            private readonly HashSet<string> _physBonePropertyPaths = new HashSet<string>();
+            private readonly Func<string, IEnumerable<EditorCurveBinding>> _bindingsAtPath;
 
             internal AvatarAnimationIndex(GameObject avatarRoot)
             {
                 foreach (var clip in CollectClips(avatarRoot).Distinct())
                 foreach (var binding in AnimationUtility.GetCurveBindings(clip))
-                {
-                    if (binding.type == typeof(Transform) && IsPositionOrRotation(binding.propertyName))
-                        _positionOrRotationPaths.Add(binding.path);
-                    if (binding.type == typeof(GameObject) && binding.propertyName == "m_IsActive") _activePaths.Add(binding.path);
-                }
+                    AddBinding(binding);
+                _bindingsAtPath = BindingsAtPath;
+            }
+
+            internal AvatarAnimationIndex(AnimationIndex animationIndex)
+            {
+                _bindingsAtPath = path => animationIndex.GetClipsForObjectPath(path)
+                    .SelectMany(clip => clip.GetFloatCurveBindings())
+                    .Where(binding => binding.path == path);
             }
 
             internal bool HasPositionOrRotationAnimation(Transform transform, GameObject avatarRoot) =>
-                _positionOrRotationPaths.Contains(AnimationUtility.CalculateTransformPath(transform, avatarRoot.transform));
+                BindingsAt(transform, avatarRoot).Any(binding => binding.type == typeof(Transform) &&
+                    IsPositionOrRotation(binding.propertyName));
 
             internal bool HasActivationAnimation(Transform transform, GameObject avatarRoot) =>
-                _activePaths.Contains(AnimationUtility.CalculateTransformPath(transform, avatarRoot.transform));
+                BindingsAt(transform, avatarRoot).Any(binding => binding.type == typeof(GameObject) &&
+                    binding.propertyName == "m_IsActive");
 
             internal bool HasActivationAnimationOnAncestors(Transform transform, GameObject avatarRoot)
             {
                 for (var current = transform; current != null; current = current.parent)
                 {
-                    if (_activePaths.Contains(AnimationUtility.CalculateTransformPath(current, avatarRoot.transform))) return true;
+                    if (HasActivationAnimation(current, avatarRoot)) return true;
                     if (current == avatarRoot.transform) break;
                 }
                 return false;
+            }
+
+            internal bool HasPhysBonePropertyAnimation(VRCPhysBone physBone, GameObject avatarRoot) =>
+                BindingsAt(physBone.transform, avatarRoot)
+                    .Any(binding => typeof(VRCPhysBoneBase).IsAssignableFrom(binding.type));
+
+            private IEnumerable<EditorCurveBinding> BindingsAt(Transform transform, GameObject avatarRoot) =>
+                _bindingsAtPath(AnimationUtility.CalculateTransformPath(transform, avatarRoot.transform));
+
+            private IEnumerable<EditorCurveBinding> BindingsAtPath(string path)
+            {
+                if (_activePaths.Contains(path))
+                    yield return EditorCurveBinding.FloatCurve(path, typeof(GameObject), "m_IsActive");
+                if (_positionOrRotationPaths.Contains(path))
+                    yield return EditorCurveBinding.FloatCurve(path, typeof(Transform), "m_LocalPosition.x");
+                if (_physBonePropertyPaths.Contains(path))
+                    yield return EditorCurveBinding.FloatCurve(path, typeof(VRCPhysBone), "m_Script");
+            }
+
+            private void AddBinding(EditorCurveBinding binding)
+            {
+                if (binding.type == typeof(Transform) && IsPositionOrRotation(binding.propertyName))
+                    _positionOrRotationPaths.Add(binding.path);
+                if (binding.type == typeof(GameObject) && binding.propertyName == "m_IsActive") _activePaths.Add(binding.path);
+                if (typeof(VRCPhysBoneBase).IsAssignableFrom(binding.type)) _physBonePropertyPaths.Add(binding.path);
             }
 
             private static bool IsPositionOrRotation(string propertyName) => propertyName == "m_LocalRotation.x" ||
@@ -114,18 +149,25 @@ namespace PBLifter.Editor
         {
             var plan = context.AvatarRootObject.GetComponent<PBLifterPlan>();
             if (plan == null) return;
-            var report = Analyze(context.AvatarRootObject, plan);
-            var animationIndex = new AvatarAnimationIndex(context.AvatarRootObject);
-            foreach (var group in report.Groups) MergeCluster(group, plan, context.AvatarRootObject, animationIndex);
+            MirrorIgnoreOtherPhysBonesToIgnoreTransforms(context.AvatarRootObject);
+            var animationIndex = new AvatarAnimationIndex(context.Extension<AnimatorServicesContext>().AnimationIndex);
+            var report = Analyze(context.AvatarRootObject, plan, animationIndex);
+            var pathRemapper = context.Extension<AnimatorServicesContext>().ObjectPathRemapper;
+            foreach (var group in report.Groups)
+                MergeCluster(group, plan, context.AvatarRootObject, animationIndex, pathRemapper);
             Object.DestroyImmediate(plan);
         }
 
         internal static ScanReport Analyze(GameObject avatarRoot, PBLifterPlan plan)
         {
+            return Analyze(avatarRoot, plan, new AvatarAnimationIndex(avatarRoot));
+        }
+
+        private static ScanReport Analyze(GameObject avatarRoot, PBLifterPlan plan, AvatarAnimationIndex animationIndex)
+        {
             var report = new ScanReport();
             var all = avatarRoot.GetComponentsInChildren<VRCPhysBone>(true);
             report.SourceCount = all.Length;
-            var animationIndex = new AvatarAnimationIndex(avatarRoot);
             var diagnostics = all.ToDictionary(pb => pb, pb => new ScanDiagnostic { PhysBone = pb });
             var uniqueTargets = new HashSet<VRCPhysBone>(all.GroupBy(EffectiveRoot)
                 .Where(group => group.Count() == 1).Select(group => group.First()));
@@ -189,11 +231,17 @@ namespace PBLifter.Editor
         private static string EligibilityReason(VRCPhysBone pb, GameObject avatarRoot, PBLifterPlan plan,
             AvatarAnimationIndex animationIndex)
         {
-            if (!pb || !pb.enabled || !pb.gameObject.activeInHierarchy) return L("组件已禁用，或其 GameObject 在层级中未激活。", "The component is disabled or its GameObject is inactive in the hierarchy.");
+            if (!pb) return L("组件引用已丢失。", "The component reference is missing.");
+            if (!pb.enabled && !HasRelaxation(plan, HighRiskRelaxations.IgnoreDisabledComponent))
+                return L("组件已禁用。", "The component is disabled.");
+            if (!pb.gameObject.activeInHierarchy && !HasRelaxation(plan, HighRiskRelaxations.IgnoreHierarchyInactive))
+                return L("其 GameObject 在层级中未激活。", "Its GameObject is inactive in the hierarchy.");
             if (!EffectiveRoot(pb).IsChildOf(avatarRoot.transform)) return L("有效根节点位于 Avatar Root 之外。", "The effective root is outside Avatar Root.");
             if (TryGetExclusionReason(pb, plan, out var exclusionReason)) return exclusionReason;
+            if (animationIndex.HasPhysBonePropertyAnimation(pb, avatarRoot))
+                return L("PhysBone 的数值属性被动画驱动。", "A numeric PhysBone property is animation-driven.");
             if (!HasRelaxation(plan, HighRiskRelaxations.IgnoreHumanoidBoneMapping) &&
-                IsHumanoidMappedBone(EffectiveRoot(pb), avatarRoot)) return L("有效根节点被 Humanoid Animator 骨骼映射引用。", "The effective root is mapped by a Humanoid Animator.");
+                IsAnimatorPathMapped(EffectiveRoot(pb), avatarRoot)) return L("有效根节点位于 Humanoid Animator 的骨骼映射路径中。", "The effective root is on a Humanoid Animator bone-mapping path.");
             var basicCandidateFailure = BasicCandidateFailureReason(pb, plan);
             if (basicCandidateFailure != null) return basicCandidateFailure;
             if (!HasRelaxation(plan, HighRiskRelaxations.IgnoreSelfActivationAnimation) &&
@@ -202,8 +250,8 @@ namespace PBLifter.Editor
             if (!HasRelaxation(plan, HighRiskRelaxations.IgnoreAffectedBoneConstraints) &&
                 AffectedTransforms(pb).Any(t => t.GetComponent<IConstraint>() != null || t.GetComponent<VRCConstraintBase>() != null))
                 return L("受影响骨骼上存在约束组件。", "An affected bone has a constraint component.");
-            if (!HasRelaxation(plan, HighRiskRelaxations.IgnoreAffectedBoneCountLimit) && CountAffected(pb) >= 100)
-                return L("受影响骨骼数达到单组件上限 100。", "The affected bone count reaches the per-component limit of 100.");
+            if (CountAffected(pb) >= MaxAffectedTransformsPerCandidate(plan))
+                return L($"受影响骨骼数达到单候选项上限 {MaxAffectedTransformsPerCandidate(plan)}。", $"The affected bone count reaches the per-candidate limit of {MaxAffectedTransformsPerCandidate(plan)}.");
             return null;
         }
 
@@ -227,13 +275,24 @@ namespace PBLifter.Editor
         private static bool HasRelaxation(PBLifterPlan plan, HighRiskRelaxations relaxation) =>
             (plan.options.highRiskRelaxations & relaxation) != 0;
 
-        private static bool IsHumanoidMappedBone(Transform root, GameObject avatarRoot)
+        private static int MaxAffectedTransformsPerCandidate(PBLifterPlan plan) =>
+            Mathf.Max(1, plan.options.maxAffectedTransformsPerCandidate);
+
+        private static int MaxAffectedTransformsPerGroup(PBLifterPlan plan) =>
+            Mathf.Max(2, plan.options.maxAffectedTransformsPerGroup);
+
+        private static bool IsAnimatorPathMapped(Transform root, GameObject avatarRoot)
         {
             foreach (var animator in avatarRoot.GetComponentsInChildren<Animator>(true))
             {
-                if (animator.avatar == null || !animator.avatar.isHuman) continue;
+                if (!animator.isHuman) continue;
                 for (var index = 0; index < (int)HumanBodyBones.LastBone; index++)
-                    if (animator.GetBoneTransform((HumanBodyBones)index) == root) return true;
+                {
+                    var bone = animator.GetBoneTransform((HumanBodyBones)index);
+                    if (bone == null || !bone.IsChildOf(animator.transform)) continue;
+                    for (var current = bone; current != animator.transform; current = current.parent)
+                        if (current == root) return true;
+                }
             }
             return false;
         }
@@ -256,10 +315,21 @@ namespace PBLifter.Editor
         private static GameObject GroupingToggleRoot(VRCPhysBone physBone, GameObject avatarRoot, PBLifterPlan plan,
             AvatarAnimationIndex animationIndex)
         {
+            var inactiveRoot = InactiveHierarchyRoot(physBone, plan);
+            if (inactiveRoot != null) return inactiveRoot;
             var toggleRoot = FindToggleRoot(physBone.gameObject, avatarRoot, animationIndex);
             if (toggleRoot != physBone.gameObject || !HasRelaxation(plan, HighRiskRelaxations.IgnoreSelfActivationAnimation))
                 return toggleRoot;
             return FindToggleRoot(physBone.transform.parent, avatarRoot, animationIndex);
+        }
+
+        private static GameObject InactiveHierarchyRoot(VRCPhysBone physBone, PBLifterPlan plan)
+        {
+            if (!HasRelaxation(plan, HighRiskRelaxations.IgnoreHierarchyInactive) ||
+                physBone.gameObject.activeInHierarchy) return null;
+            for (var current = physBone.transform; current != null; current = current.parent)
+                if (!current.gameObject.activeSelf) return current.gameObject;
+            return null;
         }
 
         private static string ExplainNotMerged(VRCPhysBone physBone, IEnumerable<VRCPhysBone> candidates,
@@ -282,7 +352,9 @@ namespace PBLifter.Editor
         {
             var left = new CompatibilitySettings(a);
             var right = new CompatibilitySettings(b);
-            if (left.IsActiveAndEnabled != right.IsActiveAndEnabled) return L("组件的启用或层级激活状态不同。", "Component enabled or hierarchy activation state differs.");
+            if (left.ComponentEnabled != right.ComponentEnabled) return L("组件启用状态不同。", "Component enabled states differ.");
+            if (left.GameObjectActiveSelf != right.GameObjectActiveSelf) return L("组件节点的自身激活状态不同。", "Component GameObject active-self states differ.");
+            if (left.GameObjectActiveInHierarchy != right.GameObjectActiveInHierarchy) return L("组件节点的层级激活状态不同。", "Component GameObject hierarchy activation states differ.");
             if (left.Version != right.Version) return L("PhysBone 版本不同。", "PhysBone versions differ.");
             if (left.RootTransformParent != right.RootTransformParent) return L("有效根节点的父级不同。", "Effective root parents differ.");
             if (left.IgnoreOtherPhysBones != right.IgnoreOtherPhysBones) return L("忽略其他 PhysBone 的设置不同。", "Ignore Other PhysBones settings differ.");
@@ -372,7 +444,9 @@ namespace PBLifter.Editor
             var left = new CompatibilitySettings(leftPhysBone);
             var right = new CompatibilitySettings(rightPhysBone);
 
-            return left.IsActiveAndEnabled == right.IsActiveAndEnabled &&
+            return left.ComponentEnabled == right.ComponentEnabled &&
+                   left.GameObjectActiveSelf == right.GameObjectActiveSelf &&
+                   left.GameObjectActiveInHierarchy == right.GameObjectActiveInHierarchy &&
                    left.Version == right.Version &&
                    left.RootTransformParent == right.RootTransformParent &&
                    left.IgnoreOtherPhysBones == right.IgnoreOtherPhysBones &&
@@ -463,7 +537,9 @@ namespace PBLifter.Editor
 
         private readonly struct CompatibilitySettings
         {
-            internal readonly bool IsActiveAndEnabled;
+            internal readonly bool ComponentEnabled;
+            internal readonly bool GameObjectActiveSelf;
+            internal readonly bool GameObjectActiveInHierarchy;
             internal readonly VRCPhysBoneBase.Version Version;
             internal readonly Transform RootTransformParent;
             internal readonly bool IgnoreOtherPhysBones;
@@ -483,7 +559,9 @@ namespace PBLifter.Editor
 
             internal CompatibilitySettings(VRCPhysBone physBone)
             {
-                IsActiveAndEnabled = physBone.enabled && physBone.gameObject.activeInHierarchy;
+                ComponentEnabled = physBone.enabled;
+                GameObjectActiveSelf = physBone.gameObject.activeSelf;
+                GameObjectActiveInHierarchy = physBone.gameObject.activeInHierarchy;
                 Version = physBone.version;
                 var root = EffectiveRoot(physBone);
                 RootTransformParent = root.parent;
@@ -523,7 +601,7 @@ namespace PBLifter.Editor
                               MaxAngleZCurve != null || LimitRotationXCurve != null || LimitRotationYCurve != null ||
                               LimitRotationZCurve != null || RadiusCurve != null || StretchMotionCurve != null ||
                               MaxStretchCurve != null || MaxSquishCurve != null
-                    ? ComputeChainLength(root, physBone.ignoreTransforms, EndpointPosition) : -1;
+                    ? ComputeChainLength(root, EffectiveIgnoreTransforms(physBone), EndpointPosition) : -1;
             }
 
             private static AnimationCurve NormalizeCurve(AnimationCurve curve, float value) =>
@@ -549,7 +627,7 @@ namespace PBLifter.Editor
             }
 
             foreach (var cluster in clusters)
-            foreach (var bucket in PartitionByAffectedTransformCount(cluster, 128))
+            foreach (var bucket in PartitionByAffectedTransformCount(cluster, MaxAffectedTransformsPerGroup(plan)))
                 if (bucket.Count > 1) yield return bucket;
         }
 
@@ -607,8 +685,28 @@ namespace PBLifter.Editor
             return cluster.All(member => WithinTolerance(candidate, new List<VRCPhysBone> { member }, plan));
         }
 
+        private static void MirrorIgnoreOtherPhysBonesToIgnoreTransforms(GameObject avatarRoot)
+        {
+#if PBLIFTER_VRCSDK3_IGNORE_OTHER_PHYSBONE
+            var physBones = avatarRoot.GetComponentsInChildren<VRCPhysBoneBase>(true);
+            var physBonesByRoot = physBones.GroupBy(EffectiveRoot)
+                .ToDictionary(group => group.Key, group => group.ToHashSet());
+            foreach (var physBone in physBones)
+            {
+                if (!physBone.ignoreOtherPhysBones) continue;
+                var ignored = new HashSet<Transform>(physBone.ignoreTransforms.Where(transform => transform != null));
+                foreach (var affected in AffectedTransforms(physBone, ignored).ToArray())
+                {
+                    if (!physBonesByRoot.TryGetValue(affected, out var atRoot) ||
+                        !atRoot.Any(other => other != physBone) || !ignored.Add(affected)) continue;
+                    physBone.ignoreTransforms.Add(affected);
+                }
+            }
+#endif
+        }
+
         private static void MergeCluster(List<VRCPhysBone> sources, PBLifterPlan plan, GameObject avatarRoot,
-            AvatarAnimationIndex animationIndex)
+            AvatarAnimationIndex animationIndex, ObjectPathRemapper pathRemapper)
         {
             var sourceRootParent = EffectiveRoot(sources[0]).parent;
             if (sourceRootParent == null) return;
@@ -623,6 +721,7 @@ namespace PBLifter.Editor
             {
                 mergedRoot = new GameObject("PB Lifter PhysBone Root").transform;
                 mergedRoot.SetParent(sourceRootParent, false);
+                pathRemapper.GetVirtualPathForObject(mergedRoot);
                 var allPhysBones = avatarRoot.GetComponentsInChildren<VRCPhysBoneBase>(true);
                 foreach (var physBone in allPhysBones.Where(physBone => physBone.ignoreTransforms.Any(sourceRoots.Contains)))
                 {
@@ -635,8 +734,11 @@ namespace PBLifter.Editor
             var toggleRoot = GroupingToggleRoot(sources[0], avatarRoot, plan, animationIndex);
             var mergedHost = new GameObject("PB Lifter Auto Merged PhysBone");
             mergedHost.transform.SetParent((toggleRoot ?? avatarRoot).transform, false);
+            pathRemapper.GetVirtualPathForObject(mergedHost);
             var merged = mergedHost.AddComponent<VRCPhysBone>();
             EditorUtility.CopySerialized(sources[0], merged);
+            merged.enabled = sources[0].enabled;
+            mergedHost.SetActive(true);
             var serialized = new SerializedObject(merged);
             foreach (var path in NumericPaths(serialized).Where(path => HasEffectiveTolerance(plan, path)).ToArray())
             {
@@ -673,9 +775,12 @@ namespace PBLifter.Editor
             return physBone.endpointPosition != Vector3.zero ? length + 1 : length;
         }
 
-        private static Transform EffectiveRoot(VRCPhysBone pb) => pb.rootTransform != null ? pb.rootTransform : pb.transform;
+        private static Transform EffectiveRoot(VRCPhysBoneBase physBone) =>
+            physBone.rootTransform != null ? physBone.rootTransform : physBone.transform;
 
-        private static int ComputeChainLength(Transform root, List<Transform> ignoredTransforms, Vector3 endpointPosition)
+        private static Transform EffectiveRoot(VRCPhysBone physBone) => EffectiveRoot((VRCPhysBoneBase)physBone);
+
+        private static int ComputeChainLength(Transform root, IEnumerable<Transform> ignoredTransforms, Vector3 endpointPosition)
         {
             var ignored = new HashSet<Transform>(ignoredTransforms.Where(transform => transform != null));
             var count = CountDepth(root);
@@ -719,10 +824,29 @@ namespace PBLifter.Editor
 
         internal static int CountAffectedForDisplay(VRCPhysBone pb) => CountAffected(pb);
 
-        private static IEnumerable<Transform> AffectedTransforms(VRCPhysBone pb)
+        private static IEnumerable<Transform> AffectedTransforms(VRCPhysBone pb) =>
+            AffectedTransforms(pb, EffectiveIgnoreTransforms(pb));
+
+        private static HashSet<Transform> EffectiveIgnoreTransforms(VRCPhysBoneBase physBone)
         {
-            var ignored = new HashSet<Transform>(pb.ignoreTransforms.Where(t => t != null));
-            return Descendants(EffectiveRoot(pb));
+            var ignored = new HashSet<Transform>(physBone.ignoreTransforms.Where(transform => transform != null));
+#if PBLIFTER_VRCSDK3_IGNORE_OTHER_PHYSBONE
+            if (!physBone.ignoreOtherPhysBones) return ignored;
+            var physBonesByRoot = physBone.transform.root.GetComponentsInChildren<VRCPhysBoneBase>(true)
+                .GroupBy(EffectiveRoot).ToDictionary(group => group.Key, group => group.ToHashSet());
+            foreach (var affected in AffectedTransforms(physBone, ignored).ToArray())
+            {
+                if (physBonesByRoot.TryGetValue(affected, out var atRoot) &&
+                    atRoot.Any(other => other != physBone)) ignored.Add(affected);
+            }
+#endif
+            return ignored;
+        }
+
+        private static IEnumerable<Transform> AffectedTransforms(VRCPhysBoneBase physBone,
+            HashSet<Transform> ignored)
+        {
+            return Descendants(EffectiveRoot(physBone));
             IEnumerable<Transform> Descendants(Transform transform)
             {
                 yield return transform;

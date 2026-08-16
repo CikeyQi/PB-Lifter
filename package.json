@@ -1,6 +1,6 @@
 {
   "name": "io.github.cikeyqi.pb-lifter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "displayName": "PB Lifter",
   "description": "VRChat Avatar PhysBone Optimizer Plugin | VRChat 模型动骨优化插件",
   "unity": "2022.3",
@@ -11,7 +11,7 @@
   },
   "url": "https://github.com/CikeyQi/PB-Lifter",
   "documentationUrl": "https://github.com/CikeyQi/PB-Lifter#readme",
-  "licensesUrl": "https://github.com/CikeyQi/PB-Lifter/blob/main/LICENSE.md",
+  "licensesUrl": "https://github.com/CikeyQi/PB-Lifter/blob/main/LICENSE",
   "repository": {
     "type": "git",
     "url": "https://github.com/CikeyQi/PB-Lifter.git"

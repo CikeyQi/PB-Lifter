@@ -7,16 +7,34 @@ namespace PBLifter
 {
     public static class PBLifterVersion
     {
-        public const string Current = "0.1.0";
+        public const string Current = "0.1.1";
     }
 
     [AddComponentMenu("PB Lifter/PB Lifter Plan")]
     [DisallowMultipleComponent]
-    public sealed class PBLifterPlan : MonoBehaviour, INDMFEditorOnly
+    public sealed class PBLifterPlan : MonoBehaviour, INDMFEditorOnly, ISerializationCallbackReceiver
     {
         public PBLifterOptions options = new PBLifterOptions();
         public List<PBLifterFieldTolerance> fieldTolerances = new List<PBLifterFieldTolerance>();
         public List<PBLifterPhysBoneExclusion> excludedPhysBones = new List<PBLifterPhysBoneExclusion>();
+
+        public void OnBeforeSerialize() { }
+
+        public void OnAfterDeserialize()
+        {
+            if (options == null) options = new PBLifterOptions();
+            if (options.maxAffectedTransformsPerCandidate < 1) options.maxAffectedTransformsPerCandidate = 100;
+            if (options.maxAffectedTransformsPerGroup < 2) options.maxAffectedTransformsPerGroup = 128;
+            if ((options.highRiskRelaxations & HighRiskRelaxations.IgnoreAffectedBoneCountLimitLegacy) != 0)
+            {
+                options.highRiskRelaxations &= ~HighRiskRelaxations.IgnoreAffectedBoneCountLimitLegacy;
+                options.maxAffectedTransformsPerGroup = 128;
+            }
+            if ((options.highRiskRelaxations & HighRiskRelaxations.IgnoreDisabledOrInactiveLegacy) == 0) return;
+            options.highRiskRelaxations &= ~HighRiskRelaxations.IgnoreDisabledOrInactiveLegacy;
+            options.highRiskRelaxations |= HighRiskRelaxations.IgnoreDisabledComponent |
+                                         HighRiskRelaxations.IgnoreHierarchyInactive;
+        }
     }
 
     [Serializable]
@@ -27,6 +45,8 @@ namespace PBLifter
         public HighRiskRelaxations highRiskRelaxations = HighRiskRelaxations.None;
         public ClusteringMode clustering = ClusteringMode.CentroidBounded;
         public ToleranceInterpretation toleranceInterpretation = ToleranceInterpretation.Absolute;
+        [Min(1)] public int maxAffectedTransformsPerCandidate = 100;
+        [Min(2)] public int maxAffectedTransformsPerGroup = 128;
     }
 
     [Serializable]
@@ -59,10 +79,13 @@ namespace PBLifter
         IgnoreHumanoidBoneMapping = 1 << 0,
         IgnoreSelfActivationAnimation = 1 << 1,
         IgnoreAffectedBoneConstraints = 1 << 2,
-        IgnoreAffectedBoneCountLimit = 1 << 3,
+        IgnoreAffectedBoneCountLimitLegacy = 1 << 3,
         IgnoreGrabbing = 1 << 4,
         IgnoreParameter = 1 << 5,
         IgnoreMultiChildMode = 1 << 6,
+        IgnoreDisabledOrInactiveLegacy = 1 << 7,
+        IgnoreDisabledComponent = 1 << 8,
+        IgnoreHierarchyInactive = 1 << 9,
     }
 
     public static class PBLifterFieldLabels
